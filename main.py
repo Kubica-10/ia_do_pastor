@@ -32,7 +32,7 @@ def gerar_pdf_da_conversa(historico_chat):
         # Tenta adicionar a fonte DejaVu para suportar caracteres especiais, se disponível
         # Certifique-se de que o arquivo DejaVuSans.ttf está na mesma pasta do main.py
         # Baixe de: https://dejavu-fonts.github.io/
-        pdf.add_font('DejaVu', '', 'DejaVuSans.ttf') 
+        pdf.add_font('DejaVu', '', 'DejaVuSans.ttf')
         pdf.set_font('DejaVu', '', 12)
     except FileNotFoundError:
         # Fallback para uma fonte padrão se DejaVu não for encontrada
@@ -46,7 +46,7 @@ def gerar_pdf_da_conversa(historico_chat):
         role = "Usuário" if mensagem['role'] == 'user' else "Assistente de IA"
         # Ajusta para UTF-8 e trata erros para evitar problemas de codificação no PDF
         # Nota: FPDF ainda tem algumas limitações com UTF-8 completo, `latin-1` é um workaround comum.
-        content = mensagem['content'].encode('latin-1', 'replace').decode('latin-1') 
+        content = mensagem['content'].encode('latin-1', 'replace').decode('latin-1')
         pdf.multi_cell(0, 10, f"{role}: {content}")
         pdf.ln(5)
 
@@ -62,14 +62,15 @@ def carregar_base_de_conhecimento():
     return None
 
 def criar_cadeia_de_conversa(_vectorstore):
-    llm = ChatGroq(model='llama-3.1-8b-instant', temperature=0.7)
+    # ****** AQUI ESTÁ A ALTERAÇÃO DO MODELO LLM ******
+    llm = ChatGroq(model='llama-3.1-70b-versatile', temperature=0.7)
 
     # O prompt agora é mais simples aqui, pois o SYSTEM_PROMPT já contém TUDO.
     # A ordem é: Contexto RAG -> System Prompt (com todas as regras e persona) -> Input do Usuário.
     prompt = ChatPromptTemplate.from_messages([
         ("system", "Contexto Bíblico para Consulta Rigorosa: {context}"), # Injeta o contexto dos documentos recuperados AQUI
-        ("system", SYSTEM_PROMPT),                                     # O prompt de persona principal (agora importado com tudo)
-        ("human", "{input}"),                                           # A pergunta do usuário
+        ("system", SYSTEM_PROMPT),                                        # O prompt de persona principal (agora importado com tudo)
+        ("human", "{input}"),                                             # A pergunta do usuário
     ])
 
     # create_stuff_documents_chain combina os documentos recuperados no prompt
@@ -77,7 +78,7 @@ def criar_cadeia_de_conversa(_vectorstore):
 
     # as_retriever busca os documentos relevantes no vectorstore
     # Aumentado 'k' para buscar mais chunks, aumentando a chance de encontrar o versículo exato
-    retriever = _vectorstore.as_retriever(search_kwargs={"k": 7}) 
+    retriever = _vectorstore.as_retriever(search_kwargs={"k": 7})
 
     # create_retrieval_chain orquestra a busca e a geração da resposta
     return create_retrieval_chain(retriever, chain)
@@ -177,7 +178,7 @@ if st.session_state['authentication_status']:
 
         st.info("Estou pronto. Faça uma pergunta ou peça para criar um sermão.")
 
-        if "chat_history" not in st.session_state: 
+        if "chat_history" not in st.session_state:
             st.session_state.chat_history = []
 
         # Exibe o histórico de mensagens
@@ -189,7 +190,7 @@ if st.session_state['authentication_status']:
         user_query = st.chat_input("Ex: 'Crie um sermão sobre fé e perseverança'")
         if user_query:
             st.session_state.chat_history.append({"role": "user", "content": user_query})
-            with st.chat_message("user"): 
+            with st.chat_message("user"):
                 st.markdown(user_query)
 
             with st.chat_message("assistant"):
