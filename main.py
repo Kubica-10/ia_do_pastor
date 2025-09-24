@@ -62,23 +62,20 @@ def carregar_base_de_conhecimento():
     return None
 
 def criar_cadeia_de_conversa(_vectorstore):
-    # ****** AQUI ESTÁ A ALTERAÇÃO DO MODELO LLM ******
-    llm = ChatGroq(model='llama-3.1-70b-versatile', temperature=0.7)
+    # ****** ALTERADO DE VOLTA PARA O MODELO 8b E TEMPERATURA ******
+    llm = ChatGroq(model='llama-3.1-8b-instant', temperature=0.7)
 
-    # O prompt agora é mais simples aqui, pois o SYSTEM_PROMPT já contém TUDO.
-    # A ordem é: Contexto RAG -> System Prompt (com todas as regras e persona) -> Input do Usuário.
     prompt = ChatPromptTemplate.from_messages([
         ("system", "Contexto Bíblico para Consulta Rigorosa: {context}"), # Injeta o contexto dos documentos recuperados AQUI
-        ("system", SYSTEM_PROMPT),                                        # O prompt de persona principal (agora importado com tudo)
+        ("system", SYSTEM_PROMPT),                                        # O prompt de persona principal (agora ultra-simplificado)
         ("human", "{input}"),                                             # A pergunta do usuário
     ])
 
     # create_stuff_documents_chain combina os documentos recuperados no prompt
     chain = create_stuff_documents_chain(llm, prompt)
 
-    # as_retriever busca os documentos relevantes no vectorstore
-    # Aumentado 'k' para buscar mais chunks, aumentando a chance de encontrar o versículo exato
-    retriever = _vectorstore.as_retriever(search_kwargs={"k": 7})
+    # Reduzido 'k' para diminuir o tamanho do contexto injetado pelo RAG
+    retriever = _vectorstore.as_retriever(search_kwargs={"k": 3})
 
     # create_retrieval_chain orquestra a busca e a geração da resposta
     return create_retrieval_chain(retriever, chain)
