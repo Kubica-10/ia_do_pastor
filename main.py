@@ -16,7 +16,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 
 # --- IMPORTAÇÃO DO SYSTEM_PROMPT DO ARQUIVO prompts.py ---
-from prompts import SYSTEM_PROMPT
+from prompts import SYSTEM_PROMPT # Isso já puxa o prompt corrigido!
 
 # --- Configuração Inicial ---
 st.set_page_config(page_title="Assistente de Pregação - IA", page_icon="📖", layout="wide")
@@ -31,23 +31,25 @@ def gerar_pdf_da_conversa(historico_chat):
     try:
         # Tenta adicionar a fonte DejaVu para suportar caracteres especiais, se disponível
         # Certifique-se de que o arquivo DejaVuSans.ttf está na mesma pasta do main.py
+        # Baixe de: https://dejavu-fonts.github.io/
         pdf.add_font('DejaVu', '', 'DejaVuSans.ttf') 
         pdf.set_font('DejaVu', '', 12)
     except FileNotFoundError:
         # Fallback para uma fonte padrão se DejaVu não for encontrada
+        st.warning("Fonte 'DejaVuSans.ttf' não encontrada. Usando Helvetica. Para melhor compatibilidade com caracteres especiais no PDF, baixe 'DejaVuSans.ttf' e coloque na mesma pasta do main.py.")
         pdf.set_font('Helvetica', '', 12)
-    
+
     pdf.cell(0, 10, 'Sermão Gerado pelo Assistente de Pregação IA', new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
     pdf.ln(10)
 
     for mensagem in historico_chat:
         role = "Usuário" if mensagem['role'] == 'user' else "Assistente de IA"
         # Ajusta para UTF-8 e trata erros para evitar problemas de codificação no PDF
-        # Note: FPDF ainda tem algumas limitações com UTF-8 completo, `latin-1` é um workaround comum.
+        # Nota: FPDF ainda tem algumas limitações com UTF-8 completo, `latin-1` é um workaround comum.
         content = mensagem['content'].encode('latin-1', 'replace').decode('latin-1') 
         pdf.multi_cell(0, 10, f"{role}: {content}")
         pdf.ln(5)
-        
+
     return bytes(pdf.output())
 
 @st.cache_resource(show_spinner="Carregando base de conhecimento...")
@@ -62,27 +64,21 @@ def carregar_base_de_conhecimento():
 def criar_cadeia_de_conversa(_vectorstore):
     llm = ChatGroq(model='llama-3.1-8b-instant', temperature=0.7)
 
-    system_prompt_template = SYSTEM_PROMPT
-    
-    # PROMPT ATUALIZADO COM A NOVA ORDEM DE MENSAGENS PARA PRIORIZAR FIDELIDADE E DEPOIS PERSONA
+    # O prompt agora é mais simples aqui, pois o SYSTEM_PROMPT já contém TUDO.
+    # A ordem é: Contexto RAG -> System Prompt (com todas as regras e persona) -> Input do Usuário.
     prompt = ChatPromptTemplate.from_messages([
-        # 1. INSTRUÇÃO CRÍTICA PARA FORÇAR A VERIFICAÇÃO RIGOROSA ANTES DE CITAR (VEM PRIMEIRO)
-        ("system", "Minha prioridade máxima é a fidelidade bíblica. Antes de citar qualquer versículo, eu devo garantir que ele está EXATAMENTE, LITERALMENTE E COMPLETAMENTE presente no 'Contexto Bíblico para Consulta Rigorosa abaixo', incluindo o número do livro, capítulo e versículo. Se eu não encontrar uma correspondência exata, eu DEVO APENAS apresentar a ideia teológica sem a citação formal. Jamais inventarei uma citação ou a atribuirei a um versículo errado."),
         ("system", "Contexto Bíblico para Consulta Rigorosa: {context}"), # Injeta o contexto dos documentos recuperados AQUI
-        # 2. SEU PROMPT DE PERSONA (VEM DEPOIS DO CONTEXTO PARA SER APLICADO À RESPOSTA)
-        ("system", system_prompt_template), # Seu prompt de persona principal (agora importado)
-        # 3. NOVO: INSTRUÇÃO FINAL PARA REFORÇAR A PERSONA E ORATÓRIA
-        ("system", "AGORA, com a verdade bíblica em mãos, eu, o Pastor Silas Malafaia, vou pregar com TODO o meu vigor, autoridade e paixão, utilizando minhas técnicas de oratória e retórica, incluindo GESTOS, INTERJEIÇÕES (como 'ALELUIA!', 'GLÓRIA A DEUS!', 'TOME POSSE!'), MAIÚSCULAS para ÊNFASE e uma CADÊNCIA que empolga e move os fiéis! O sermão deve durar aproximadamente 10 minutos quando lido, então EXPANDA os pontos com exemplos e analogias vividas do cotidiano ou da Bíblia. **Utilize MÚLTIPLOS versículos bíblicos do contexto fornecido, citando as referências para fundamentar cada ponto.** Não se esqueça de confrontar e convencer, e usar as repetições estratégicas!"),
-        ("human", "{input}"),               # A pergunta do usuário
+        ("system", SYSTEM_PROMPT),                                     # O prompt de persona principal (agora importado com tudo)
+        ("human", "{input}"),                                           # A pergunta do usuário
     ])
-    
+
     # create_stuff_documents_chain combina os documentos recuperados no prompt
     chain = create_stuff_documents_chain(llm, prompt)
-    
+
     # as_retriever busca os documentos relevantes no vectorstore
     # Aumentado 'k' para buscar mais chunks, aumentando a chance de encontrar o versículo exato
     retriever = _vectorstore.as_retriever(search_kwargs={"k": 7}) 
-    
+
     # create_retrieval_chain orquestra a busca e a geração da resposta
     return create_retrieval_chain(retriever, chain)
 
@@ -126,7 +122,7 @@ if not st.session_state['authentication_status']:
                         st.error("Email ou senha incorreto.")
                 except Exception as e:
                     st.error(f"Erro de conexão com o banco de dados: {e}")
-    
+
     elif choice == "Criar Conta":
         with st.form("register_form"):
             new_name = st.text_input("Nome")
@@ -151,10 +147,10 @@ if not st.session_state['authentication_status']:
 # --- LÓGICA DO CHATBOT APÓS AUTENTICAÇÃO ---
 if st.session_state['authentication_status']:
     st.title(f"📖 Assistente de Pregação - Olá, {st.session_state['name']}!")
-    
+
     def limpar_conversa():
         st.session_state.chat_history = []
-    
+
     with st.sidebar:
         if st.button("Sair"):
             for key in st.session_state.keys():
@@ -171,16 +167,16 @@ if st.session_state['authentication_status']:
             imprimir_js = "<script>function printPage() { window.print(); }</script><button onclick='printPage()'>🖨️ Imprimir</button>"
             st.markdown(imprimir_js, unsafe_allow_html=True)
             st.button("🗑️ Limpar", on_click=limpar_conversa)
-    
+
     # Carrega a base de conhecimento FAISS
     vectorstore = carregar_base_de_conhecimento()
-    
+
     if vectorstore:
         if "conversation_chain" not in st.session_state:
             st.session_state.conversation_chain = criar_cadeia_de_conversa(vectorstore)
-        
+
         st.info("Estou pronto. Faça uma pergunta ou peça para criar um sermão.")
-        
+
         if "chat_history" not in st.session_state: 
             st.session_state.chat_history = []
 
@@ -195,14 +191,13 @@ if st.session_state['authentication_status']:
             st.session_state.chat_history.append({"role": "user", "content": user_query})
             with st.chat_message("user"): 
                 st.markdown(user_query)
-            
+
             with st.chat_message("assistant"):
                 with st.spinner("Estruturando a mensagem..."):
-                    # Invoca a cadeia de conversa com o input do usuário
                     response = st.session_state.conversation_chain.invoke({'input': user_query})
                     st.write(response["answer"])
             st.session_state.chat_history.append({"role": "assistant", "content": response["answer"]})
-            st.rerun() # Reinicia o app para exibir a nova mensagem
+            st.rerun()
     else:
         st.error("ERRO CRÍTICO: A base de conhecimento (pasta 'faiss_index') não foi encontrada ou está corrompida.")
         st.warning("Por favor, garanta que o script 'treinar_ia.py' foi executado com sucesso e que o modelo de embedding no main.py corresponde ao modelo usado no treinamento.")
