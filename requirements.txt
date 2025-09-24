@@ -1,0 +1,15 @@
+streamlit
+langchain-community==0.2.5
+langchain-groq
+langchain-huggingface
+supabase
+pypdf
+youtube-transcript-api
+pytube
+beautifulsoup4
+faiss-cpu
+sentence-transformers
+python-dotenv
+bcrypt
+fpdf2
+openai

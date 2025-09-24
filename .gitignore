@@ -1,0 +1,23 @@
+# Arquivo de Segredos
+# A regra mais importante: nunca envie suas chaves de API!
+.env
+
+# Ambiente Virtual, Caches e Dependências Locais
+venv/
+.venv/
+__pycache__/
+*.pyc
+ia_pastor_env/
+clone_env/
+
+# Dados de Treinamento
+# Ignora a pasta com os PDFs que usamos para treinar a IA
+pdfs/
+# Ignora a pasta textos_transcritos/ que usamos para treinar a IA
+textos_transcritos/
+
+# Arquivos de sistema operacional e de editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
