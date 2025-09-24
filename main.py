@@ -3,6 +3,7 @@ import streamlit as st
 from dotenv import load_dotenv
 from supabase import create_client, Client
 import bcrypt
+import json # Para ler o biblia_completa.json
 
 # --- Importação para PDF (com sintaxe moderna) ---
 from fpdf import FPDF, XPos, YPos
@@ -10,33 +11,79 @@ from fpdf import FPDF, XPos, YPos
 # --- Importações do agente (LangChain, etc.) ---
 from langchain_groq import ChatGroq
 from langchain.prompts import ChatPromptTemplate
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.chains import create_retrieval_chain
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 
+# --- NOVAS IMPORTAÇÕES PARA FERRAMENTAS E AGENTES ---
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.tools import tool # Importa o decorador @tool
+
 # --- IMPORTAÇÃO DO SYSTEM_PROMPT DO ARQUIVO prompts.py ---
-from prompts import SYSTEM_PROMPT # Isso já puxa o prompt corrigido!
+from prompts import SYSTEM_PROMPT
 
 # --- Configuração Inicial ---
 st.set_page_config(page_title="Assistente de Pregação - IA", page_icon="📖", layout="wide")
-load_dotenv() # Garante que as variáveis do .env sejam carregadas
+load_dotenv()
 
 # --- DEFINIÇÃO DAS FUNÇÕES PRINCIPAIS DO APP ---
 FAISS_INDEX_PATH = "faiss_index"
+BIBLIA_COMPLETA_PATH = "biblia_completa.json" # Caminho para o seu arquivo da Bíblia completa
 
+# Carrega a Bíblia completa para a ferramenta de citação
+try:
+    with open(BIBLIA_COMPLETA_PATH, 'r', encoding='utf-8') as f:
+        BIBLIA_COMPLETA = json.load(f)
+except FileNotFoundError:
+    st.error(f"ERRO: O arquivo '{BIBLIA_COMPLETA_PATH}' não foi encontrado. Por favor, certifique-se de que ele está na mesma pasta do 'main.py'.")
+    st.stop()
+except json.JSONDecodeError:
+    st.error(f"ERRO: O arquivo '{BIBLIA_COMPLETA_PATH}' está corrompido ou mal formatado. Verifique o conteúdo JSON.")
+    st.stop()
+
+# --- FERRAMENTA DE CITAÇÃO BÍBLICA (SUA IDEIA IMPLEMENTADA!) ---
+@tool
+def citar_biblia(referencia: str) -> str:
+    """
+    Usa esta ferramenta para obter o texto EXATO de um versículo bíblico.
+    O formato da referência DEVE ser: 'Livro Capítulo:Versículo'.
+    Exemplos: 'Êxodo 3:14', 'Salmos 23:1', 'João 3:16'.
+    Retorna o texto do versículo ou uma mensagem de 'versículo não encontrado'.
+    """
+    try:
+        livro_cap_vers = referencia.split(' ', 1) # Separa o Livro do restante
+        livro = livro_cap_vers[0]
+
+        if len(livro_cap_vers) < 2:
+            return f"Referência '{referencia}' inválida. Formato esperado: 'Livro Capítulo:Versículo'."
+
+        capitulo_versiculo = livro_cap_vers[1]
+
+        # Adaptação para o formato do seu JSON, se for diferente de "Livro C:V"
+        # Assumindo que seu JSON tem a estrutura:
+        # { "Livro": { "Capitulo": { "Versiculo": "Texto" } } }
+        # Ou diretamente: { "Livro C:V": "Texto" }
+        # Se for diretamente "Livro C:V": "Texto", a busca é mais simples.
+        # VAMOS ASSUMIR POR AGORA QUE É "Livro C:V": "Texto" (a chave é a referência completa)
+
+        # Busca direta pela referência completa no JSON
+        versiculo_texto = BIBLIA_COMPLETA.get(referencia, None)
+
+        if versiculo_texto:
+            return versiculo_texto
+        else:
+            return f"Versículo '{referencia}' não encontrado na base de dados da Bíblia. Por favor, verifique a referência exata."
+    except Exception as e:
+        return f"Erro ao tentar citar a Bíblia com a referência '{referencia}': {e}. Certifique-se do formato 'Livro Capítulo:Versículo'."
+
+# --- Funções existentes do app ---
 def gerar_pdf_da_conversa(historico_chat):
     pdf = FPDF()
     pdf.add_page()
     try:
-        # Tenta adicionar a fonte DejaVu para suportar caracteres especiais, se disponível
-        # Certifique-se de que o arquivo DejaVuSans.ttf está na mesma pasta do main.py
-        # Baixe de: https://dejavu-fonts.github.io/
         pdf.add_font('DejaVu', '', 'DejaVuSans.ttf')
         pdf.set_font('DejaVu', '', 12)
     except FileNotFoundError:
-        # Fallback para uma fonte padrão se DejaVu não for encontrada
-        st.warning("Fonte 'DejaVuSans.ttf' não encontrada. Usando Helvetica. Para melhor compatibilidade com caracteres especiais no PDF, baixe 'DejaVuSans.ttf' e coloque na mesma pasta do main.py.")
+        st.warning("Fonte 'DejaVuSans.ttf' não encontrada. Usando Helvetica.")
         pdf.set_font('Helvetica', '', 12)
 
     pdf.cell(0, 10, 'Sermão Gerado pelo Assistente de Pregação IA', new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
@@ -44,8 +91,6 @@ def gerar_pdf_da_conversa(historico_chat):
 
     for mensagem in historico_chat:
         role = "Usuário" if mensagem['role'] == 'user' else "Assistente de IA"
-        # Ajusta para UTF-8 e trata erros para evitar problemas de codificação no PDF
-        # Nota: FPDF ainda tem algumas limitações com UTF-8 completo, `latin-1` é um workaround comum.
         content = mensagem['content'].encode('latin-1', 'replace').decode('latin-1')
         pdf.multi_cell(0, 10, f"{role}: {content}")
         pdf.ln(5)
@@ -54,31 +99,48 @@ def gerar_pdf_da_conversa(historico_chat):
 
 @st.cache_resource(show_spinner="Carregando base de conhecimento...")
 def carregar_base_de_conhecimento():
-    # CORREÇÃO CRÍTICA: Usar o mesmo modelo de embedding do treinar_ia.py
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-MiniLM-L3-v2")
     if os.path.exists(FAISS_INDEX_PATH):
-        # allow_dangerous_deserialization=True é necessário para carregar índices salvos
         return FAISS.load_local(FAISS_INDEX_PATH, embeddings, allow_dangerous_deserialization=True)
     return None
 
-def criar_cadeia_de_conversa(_vectorstore):
-    # ****** ALTERADO DE VOLTA PARA O MODELO 8b E TEMPERATURA ******
-    llm = ChatGroq(model='llama-3.1-8b-instant', temperature=0.7)
+# --- NOVA FUNÇÃO PARA CRIAR A CADEIA DE AGENTE ---
+def criar_cadeia_de_agente(_vectorstore):
+    llm = ChatGroq(model='llama-3.1-8b-instant', temperature=0.7) # Voltamos ao 8b
 
+    # Agora o Agente terá acesso às ferramentas
+    tools = [
+        citar_biblia, # Nossa nova ferramenta!
+        # Podemos adicionar mais ferramentas aqui no futuro, se necessário.
+    ]
+
+    # O Agente precisará do retriever como uma 'tool' implícita para o RAG
+    # Para isso, usaremos o vectorstore diretamente na construção do agente
+    # A instrução para usar o RAG estará no SYSTEM_PROMPT.
+
+    # Cria o prompt do agente, que inclui as instruções e o chat history
+    # O SYSTEM_PROMPT (agora em prompts.py) será injetado aqui.
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "Contexto Bíblico para Consulta Rigorosa: {context}"), # Injeta o contexto dos documentos recuperados AQUI
-        ("system", SYSTEM_PROMPT),                                        # O prompt de persona principal (agora ultra-simplificado)
-        ("human", "{input}"),                                             # A pergunta do usuário
+        ("system", SYSTEM_PROMPT), # O SYSTEM_PROMPT contém as instruções para o agente usar as ferramentas e o RAG
+        ("placeholder", "{chat_history}"), # Placeholder para o histórico da conversa
+        ("human", "{input}"),
+        ("placeholder", "{agent_scratchpad}"), # Onde o agente "rascunha" seu raciocínio e uso de ferramentas
     ])
 
-    # create_stuff_documents_chain combina os documentos recuperados no prompt
-    chain = create_stuff_documents_chain(llm, prompt)
+    # Cria o agente que sabe como usar as ferramentas
+    agent = create_tool_calling_agent(llm, tools, prompt)
 
-    # Reduzido 'k' para diminuir o tamanho do contexto injetado pelo RAG
-    retriever = _vectorstore.as_retriever(search_kwargs={"k": 3})
-
-    # create_retrieval_chain orquestra a busca e a geração da resposta
-    return create_retrieval_chain(retriever, chain)
+    # Cria o executor do agente. Este é o coração do sistema.
+    # Ele orquestra o LLM, as ferramentas e o retriever (para RAG).
+    return AgentExecutor(
+        agent=agent,
+        tools=tools,
+        verbose=True, # Define como True para ver o raciocínio do agente no console/logs
+        # O RAG agora será parte do que o Agente "pensa" em usar, instruído pelo SYSTEM_PROMPT
+        # Não passamos o retriever diretamente aqui, mas o prompt guiará o agente a usar
+        # o CONTEXTO BÍBLICO PARA CONSULTA RIGOROSA (RAG) para informações gerais,
+        # e a 'citar_biblia' para citações LITERAIS.
+    )
 
 # --- CONFIGURAÇÃO DE AUTENTICAÇÃO E BANCO DE DADOS ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -156,34 +218,29 @@ if st.session_state['authentication_status']:
             st.rerun()
         st.divider()
 
-        # Botões de ação para a conversa (baixar, imprimir, limpar)
         if "chat_history" in st.session_state and st.session_state.chat_history:
             st.header("Ações da Conversa")
             pdf_data = gerar_pdf_da_conversa(st.session_state.chat_history)
             st.download_button(label="⬇️ Baixar (PDF)", data=pdf_data, file_name="sermão_gerado.pdf", mime="application/pdf")
-            # Adiciona o botão de impressão via HTML e JavaScript
             imprimir_js = "<script>function printPage() { window.print(); }</script><button onclick='printPage()'>🖨️ Imprimir</button>"
             st.markdown(imprimir_js, unsafe_allow_html=True)
             st.button("🗑️ Limpar", on_click=limpar_conversa)
 
-    # Carrega a base de conhecimento FAISS
     vectorstore = carregar_base_de_conhecimento()
 
     if vectorstore:
-        if "conversation_chain" not in st.session_state:
-            st.session_state.conversation_chain = criar_cadeia_de_conversa(vectorstore)
+        if "conversation_agent" not in st.session_state:
+            st.session_state.conversation_agent = criar_cadeia_de_agente(vectorstore)
 
         st.info("Estou pronto. Faça uma pergunta ou peça para criar um sermão.")
 
         if "chat_history" not in st.session_state:
             st.session_state.chat_history = []
 
-        # Exibe o histórico de mensagens
         for message in st.session_state.chat_history:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
-        # Campo de entrada para o usuário
         user_query = st.chat_input("Ex: 'Crie um sermão sobre fé e perseverança'")
         if user_query:
             st.session_state.chat_history.append({"role": "user", "content": user_query})
@@ -191,10 +248,13 @@ if st.session_state['authentication_status']:
                 st.markdown(user_query)
 
             with st.chat_message("assistant"):
-                with st.spinner("Estruturando a mensagem..."):
-                    response = st.session_state.conversation_chain.invoke({'input': user_query})
-                    st.write(response["answer"])
-            st.session_state.chat_history.append({"role": "assistant", "content": response["answer"]})
+                with st.spinner("Estruturando a mensagem com o Poder do Espírito Santo..."):
+                    # Agora, invocar o Agente
+                    response = st.session_state.conversation_agent.invoke(
+                        {"input": user_query, "chat_history": st.session_state.chat_history} # Passa o histórico para o agente
+                    )
+                    st.write(response["output"]) # O output do Agente é 'output', não 'answer'
+            st.session_state.chat_history.append({"role": "assistant", "content": response["output"]})
             st.rerun()
     else:
         st.error("ERRO CRÍTICO: A base de conhecimento (pasta 'faiss_index') não foi encontrada ou está corrompida.")
